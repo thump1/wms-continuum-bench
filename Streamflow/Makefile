@@ -12,7 +12,7 @@ LATENCY  ?= 0
 
 .PHONY: help setup setup-patches info hello hello-docker minipipeline iot iot-ssh iot-hybrid \
         iot-k8s iot-k8s-continuum iot-k8s-cloud-only iot-k8s-latency \
-        all all-k8s clean clean-all validate
+        all all-k8s dashboard clean clean-all validate
 
 help:
 	@echo "Targets:"
@@ -36,6 +36,10 @@ help:
 	@echo "  iot-k8s-latency    Run 05_iot_latency (edge+cloud with simulated WAN delay)"
 	@echo "                       Override: LATENCY=200 (ms, default 0)"
 	@echo "  all-k8s            Run all three k8s placement scenarios"
+	@echo ""
+	@echo ""
+	@echo "  --- Dashboard ---"
+	@echo "  dashboard          Launch Streamlit provenance dashboard (http://localhost:8501)"
 	@echo ""
 	@echo "  clean              Remove StreamFlow temp files but keep results/"
 	@echo "  clean-all          Remove all generated output"
@@ -97,6 +101,27 @@ iot-k8s-latency:
 	@rm -f _sf-latency-run.yml inputs/_latency_override.yml
 
 all-k8s: iot-k8s iot-k8s-continuum iot-k8s-cloud-only
+
+# --- tc netem latency injection ---
+
+tc-inject:
+	@scripts/tc-inject-latency.sh k3d-continuum-agent-1 $(LATENCY)
+
+tc-remove:
+	@scripts/tc-remove-latency.sh all
+
+tc-show:
+	@scripts/tc-show-latency.sh
+
+iot-k8s-netem:
+	@echo "=== tc netem $(LATENCY)ms on edge node ==="
+	scripts/tc-inject-latency.sh k3d-continuum-agent-1 $(LATENCY)
+	$(SF) run streamflow-iot-k8s-continuum.yml --outdir $(OUTDIR)/iot_k8s_netem_$(LATENCY)ms || \
+		(scripts/tc-remove-latency.sh all && exit 1)
+	scripts/tc-remove-latency.sh all
+
+dashboard:
+	.venv/bin/streamlit run dashboard/app.py --server.headless true
 
 clean:
 	rm -rf /tmp/streamflow*

@@ -86,6 +86,30 @@ make iot-k8s-latency LATENCY=500   # 500ms intercontinental
 
 The Helm chart at `helm/streamflow-worker/` deploys two pods: `cloud-worker` (on `continuum-tier=cloud` node) and `edge-worker` (on `continuum-tier=edge` node). The CWL workflows are identical across all configurations — only the StreamFlow YAML bindings change.
 
+### Real network latency (tc netem)
+
+Inject real packet delay on k3d nodes using `tc netem` via an Alpine sidecar:
+
+```bash
+make tc-inject LATENCY=200           # inject 200ms delay on edge node
+make tc-show                         # verify active netem config
+make iot-k8s-netem LATENCY=200       # inject → run workflow → remove (automated)
+make tc-remove                       # manual cleanup (both nodes)
+```
+
+**Warning**: tc netem affects ALL packets on the node (k8s API, WebSocket, health checks), not just data transfers. Expect 6-7× slowdown even at 0ms and WebSocket failures at ≥500ms.
+
+## Dashboard
+
+Streamlit-based provenance dashboard that visualises benchmark data, execution timelines, IoT sensor results, and workflow DAGs.
+
+```bash
+pip install streamlit plotly graphviz   # one-time (into .venv)
+make dashboard                         # opens http://localhost:8501
+```
+
+Tabs: **Benchmarks** (cross-SWMS bar charts) · **Latency Analysis** (WAN impact on sequential scatter) · **Execution Timeline** (Gantt from SQLite provenance) · **IoT Sensor Data** (per-device stats from result JSON) · **Workflow DAG** (step dependencies).
+
 ## Validation
 
 ```bash
@@ -120,6 +144,11 @@ StreamFlow/
 │   ├── latency-50ms.yml
 │   ├── latency-200ms.yml
 │   └── latency-500ms.yml
+├── scripts/                 ← tc netem latency injection
+│   ├── tc-inject-latency.sh
+│   ├── tc-remove-latency.sh
+│   └── tc-show-latency.sh
+├── dashboard/app.py         ← Streamlit provenance dashboard
 ├── data/samples.csv         ← same samples as Nextflow POC
 ├── notes/benchmarks.md      ← run log + cross-SWMS comparison
 ├── reports/                 ← auto-generated reports

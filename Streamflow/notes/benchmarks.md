@@ -99,6 +99,31 @@ Notes:       observations, errors, surprises
 
 - **Notes**: Latency is injected as `time.sleep()` in the device_pipeline tool, simulating data transfer delay between IoT→Edge and Edge→Cloud. Each device experiences 2 transfers: raw data in + stats out. With 10 devices running sequentially, 200ms latency adds ~4s total; 500ms adds ~10s. In a parallel execution model the penalty would be only 2×latency (not 10×2×latency), making parallel scheduling critical for latency-sensitive continuum workflows.
 
+### 2026-06-16 — IoT pipeline on k8s/k3d with tc netem (real network latency)
+- **Workflow**: `workflows/04_iot_pipeline.cwl`
+- **Deployment**: `streamflow-iot-k8s-continuum.yml` (edge+cloud placement)
+- **Host**: Mac M3 Pro, 18 GB — k3d cluster
+- **Method**: `tc netem` injected on edge node (k3d-continuum-agent-1) via Alpine sidecar sharing the node's network namespace. Affects ALL packets: k8s API calls, WebSocket exec, pod health checks, data transfers.
+
+| netem delay | Wall-clock | Status  | Notes |
+|-------------|-----------|---------|-------|
+| 0ms         | 2m 38s    | OK      | Baseline with netem qdisc active (no actual delay) |
+| 50ms        | 1m 43s    | OK (retry) | First attempt: WSServerHandshakeError 500. Retry succeeded. |
+| 200ms       | 2m 53s    | OK      | Regional WAN simulation |
+| 500ms       | ~1m 12s   | FAILED  | WSServerHandshakeError 500 on gather phase — k8s exec API cannot complete WebSocket handshake |
+
+- **Key finding**: tc netem affects the k8s control plane, not just data transfers. Even 0ms netem (qdisc active but no delay) takes 2m 38s vs 24s without netem — a **6.6× slowdown** caused by the netem kernel module intercepting every packet on the node's eth0. This is fundamentally different from sleep-based simulation, which only delays application-level transfers.
+
+**Sleep-based vs tc netem comparison:**
+
+| Latency | Sleep-based | tc netem | Ratio |
+|---------|------------|----------|-------|
+| 0ms     | 23.9s      | 2m 38s   | 6.6×  |
+| 200ms   | 26.3s      | 2m 53s   | 6.6×  |
+| 500ms   | 32.3s      | FAILED   | —     |
+
+- **Implication**: Sleep-based simulation is useful for modelling application-level data transfer costs in isolation. tc netem captures the full system impact (control plane + data plane) but becomes destructive at high latencies because the SWMS's orchestration protocol (WebSocket exec) shares the same degraded network path. In a real edge-cloud deployment, the control plane would typically use a separate management network — making tc netem's impact pessimistic but revealing of a real coupling risk.
+
 ---
 
 ## Observations
@@ -120,6 +145,12 @@ Notes:       observations, errors, surprises
 - **Latency scales linearly with sequential scatter**: 200ms per-transfer × 2 transfers × 10 devices (sequential) = ~4s overhead. This is a strong argument for parallel scatter execution — in Nextflow's k8s mode, latency would only add 2×200ms = 0.4s (parallelised across devices).
 - **StreamFlow's Helm3 connector** is production-quality: manages chart lifecycle, schedules on labeled nodes, handles cross-pod data transfer. No k8s-specific code needed in the CWL.
 
+**tc netem findings:**
+- **Control plane coupling**: tc netem on a k8s node degrades the orchestration protocol (WebSocket exec) alongside data transfers. This coupling is absent in sleep-based simulation and exposes a real architectural concern for edge-cloud SWMSs that use the same network path for control and data.
+- **Nonlinear failure**: 500ms netem causes WebSocket handshake failures (HTTP 500). The k8s API server has internal timeouts that interact with network latency in unpredictable ways. At 50ms there were intermittent failures (succeeded on retry).
+- **Baseline overhead**: Even 0ms netem adds ~130s overhead (2m38s vs 24s). The netem kernel qdisc module introduces packet-processing overhead even with zero configured delay, plus it enables per-packet timestamping.
+- **Thesis implication**: Real edge-cloud SWMS deployments need a **separate management plane** (out-of-band control network) to avoid control/data coupling. This validates the observation in SoA §5 about SDN/NFV providing network slicing for heterogeneous traffic classes.
+
 ---
 
 ## Cross-SWMS comparison
@@ -138,6 +169,10 @@ See also `SWMS-POC/Nextflow/notes/benchmarks.md` for the Nextflow baseline.
 | IoT (10×10K)        | StreamFlow | k8s cloud-only   | Mac M3  | 23.6s      | Single cloud pod, no edge |
 | IoT (10×10K)        | StreamFlow | k8s latency 200ms| Mac M3  | 26.3s      | Edge+cloud + 200ms simulated WAN |
 | IoT (10×10K)        | StreamFlow | k8s latency 500ms| Mac M3  | 32.3s      | Edge+cloud + 500ms simulated WAN |
+| IoT (10×10K)        | StreamFlow | k8s netem 0ms    | Mac M3  | 2m 38s     | tc netem on edge node, no delay |
+| IoT (10×10K)        | StreamFlow | k8s netem 50ms   | Mac M3  | 1m 43s     | tc netem 50ms (retry after WS 500) |
+| IoT (10×10K)        | StreamFlow | k8s netem 200ms  | Mac M3  | 2m 53s     | tc netem 200ms regional WAN |
+| IoT (10×10K)        | StreamFlow | k8s netem 500ms  | Mac M3  | FAILED     | WS handshake error — k8s API broke |
 | IoT (50×100K)       | Nextflow   | docker           | Mac M3  | 7m 37s     | 151 tasks, ~10-12 concurrent |
 | IoT (50×100K)       | Nextflow   | k8s (k3d)       | Mac M3  | 1m 55s     | ~33 concurrent pods, over-subscribed |
 | IoT (10×10K)        | StreamFlow | ssh              | Ubuntu  | —          | (pending: server credentials) |

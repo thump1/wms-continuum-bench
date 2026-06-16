@@ -1,0 +1,24 @@
+# StreamFlow deployment: IoT pipeline on the Ubuntu server via SSH.
+# Fill in your server hostname, username, and SSH key path before running.
+version: v1.0
+models:
+  ubuntu-server:
+    type: ssh
+    config:
+      nodes:
+        - hostname: <UBUNTU_SERVER_HOST>
+      username: <UBUNTU_SERVER_USER>
+      sshKey: ~/.ssh/id_rsa
+      checkHostKey: false
+workflows:
+  iot-pipeline:
+    type: cwl
+    config:
+      file: workflows/04_iot_pipeline.cwl
+    bindings:
+      - step: /device_pipeline
+        target:
+          model: ubuntu-server
+      - step: /cloud_aggregate
+        target:
+          model: ubuntu-server

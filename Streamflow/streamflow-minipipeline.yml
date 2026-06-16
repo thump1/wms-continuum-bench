@@ -1,0 +1,20 @@
+version: v1.0
+models:
+  docker-python:
+    type: docker
+    config:
+      image: python:3.12
+      volume:
+        - "/tmp/streamflow:/tmp/streamflow"
+workflows:
+  minipipeline:
+    type: cwl
+    config:
+      file: workflows/02_minipipeline.cwl
+    bindings:
+      - step: /generate_and_analyse
+        target:
+          model: docker-python
+      - step: /summarise
+        target:
+          model: docker-python

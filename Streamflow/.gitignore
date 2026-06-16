@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+results/*
+!results/.gitkeep
+reports/*
+!reports/.gitkeep
+/tmp/
+.streamflow/
+*.log
+_sf-latency-run.yml
+inputs/_latency_override.yml

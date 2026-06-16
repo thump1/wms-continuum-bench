@@ -1,0 +1,12 @@
+image: python:3.12
+namespace: scientific
+
+cloud:
+  enabled: true
+  nodeSelector:
+    continuum-tier: cloud
+
+edge:
+  enabled: true
+  nodeSelector:
+    continuum-tier: edge

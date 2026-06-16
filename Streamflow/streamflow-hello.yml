@@ -1,0 +1,6 @@
+version: v1.0
+workflows:
+  hello:
+    type: cwl
+    config:
+      file: workflows/00_hello.cwl

@@ -1,0 +1,30 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Nextflow runtime
+Nextflow/work/
+Nextflow/.nextflow/
+Nextflow/.nextflow.log*
+
+# StreamFlow runtime
+StreamFlow/.streamflow/
+StreamFlow/_sf-latency-run.yml
+StreamFlow/inputs/_latency_override.yml
+
+# Outputs (regenerable)
+**/results/
+**/reports/
+*.log
+
+# k3d
+k3d/.kube/

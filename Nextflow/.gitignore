@@ -1,0 +1,16 @@
+# Nextflow runtime
+work/
+.nextflow*
+*.log
+
+# Outputs
+results/
+reports/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/

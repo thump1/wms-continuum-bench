@@ -1,0 +1,23 @@
+version: v1.0
+workflows:
+  iot-k8s-latency:
+    type: cwl
+    config:
+      file: workflows/05_iot_pipeline_latency.cwl
+      settings: inputs/latency-0ms.yml
+    bindings:
+      - step: /device_pipeline
+        target:
+          model: k8s-continuum
+          service: edge-worker
+      - step: /cloud_aggregate
+        target:
+          model: k8s-continuum
+          service: cloud-worker
+
+models:
+  k8s-continuum:
+    type: helm3
+    config:
+      chart: helm/streamflow-worker
+      namespace: scientific

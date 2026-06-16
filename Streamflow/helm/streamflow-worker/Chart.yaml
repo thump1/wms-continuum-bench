@@ -1,0 +1,5 @@
+apiVersion: v2
+name: streamflow-worker
+description: Persistent worker pods for StreamFlow CWL execution on k3d continuum
+version: 0.1.0
+type: application

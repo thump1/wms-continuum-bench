@@ -1,0 +1,17 @@
+version: v1.0
+models:
+  docker-ubuntu:
+    type: docker
+    config:
+      image: ubuntu:24.04
+      volume:
+        - "/tmp/streamflow:/tmp/streamflow"
+workflows:
+  hello-docker:
+    type: cwl
+    config:
+      file: workflows/01_hello_docker.cwl
+    bindings:
+      - step: /say_hello
+        target:
+          model: docker-ubuntu

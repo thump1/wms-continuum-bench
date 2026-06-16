@@ -1,0 +1,23 @@
+version: v1.0
+workflows:
+  iot-k8s-cloud-only:
+    type: cwl
+    config:
+      file: workflows/04_iot_pipeline.cwl
+    bindings:
+      - step: /device_pipeline
+        target:
+          model: k8s-cloud
+          service: cloud-worker
+      - step: /cloud_aggregate
+        target:
+          model: k8s-cloud
+          service: cloud-worker
+
+models:
+  k8s-cloud:
+    type: helm3
+    config:
+      chart: helm/streamflow-worker
+      namespace: scientific
+      commandLineValues: "edge.enabled=false"

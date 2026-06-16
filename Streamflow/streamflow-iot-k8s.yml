@@ -1,0 +1,22 @@
+version: v1.0
+workflows:
+  iot-k8s:
+    type: cwl
+    config:
+      file: workflows/04_iot_pipeline.cwl
+    bindings:
+      - step: /device_pipeline
+        target:
+          model: k8s-continuum
+          service: cloud-worker
+      - step: /cloud_aggregate
+        target:
+          model: k8s-continuum
+          service: cloud-worker
+
+models:
+  k8s-continuum:
+    type: helm3
+    config:
+      chart: helm/streamflow-worker
+      namespace: scientific

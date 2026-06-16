@@ -1,0 +1,20 @@
+version: v1.0
+models:
+  docker-python:
+    type: docker
+    config:
+      image: python:3.12
+      volume:
+        - "/tmp/streamflow:/tmp/streamflow"
+workflows:
+  iot-pipeline:
+    type: cwl
+    config:
+      file: workflows/04_iot_pipeline.cwl
+    bindings:
+      - step: /device_pipeline
+        target:
+          model: docker-python
+      - step: /cloud_aggregate
+        target:
+          model: docker-python

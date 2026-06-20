@@ -16,7 +16,7 @@ https://research.cs.wisc.edu/htcondor/repo/ubuntu/25.x resolute main" | \
     sudo tee /etc/apt/sources.list.d/htcondor.list
 
 sudo apt-get update -qq
-sudo apt-get install -y htcondor
+sudo apt-get install -y condor
 
 echo "HTCondor version: $(condor_version)"
 echo "=== Done ==="

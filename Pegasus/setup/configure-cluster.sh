@@ -15,59 +15,42 @@ ROLE="$1"
 case "$ROLE" in
   cm)
     echo "=== Configuring Central Manager (pegasus-cm) ==="
-    sudo tee /etc/condor/config.d/00-cm.config << 'EOF'
+    sudo tee /etc/condor/config.d/50-cluster.config << 'EOF'
 CONDOR_HOST = pegasus-cm
 DAEMON_LIST = MASTER COLLECTOR NEGOTIATOR SCHEDD
 
 NEGOTIATOR_INTERVAL = 20
 
-ALLOW_WRITE = 10.0.1.*
-ALLOW_READ  = 10.0.1.*
-
-SEC_DEFAULT_AUTHENTICATION_METHODS = IDTOKENS
-SEC_CLIENT_AUTHENTICATION_METHODS  = IDTOKENS
-
-SEC_TOKEN_DIRECTORY = /etc/condor/tokens.d
+ALLOW_WRITE = 10.0.1.*, $(FULL_HOSTNAME), $(IP_ADDRESS), 127.0.0.1
+ALLOW_READ  = 10.0.1.*, $(FULL_HOSTNAME), $(IP_ADDRESS), 127.0.0.1
+ALLOW_ADMINISTRATOR = $(FULL_HOSTNAME), $(IP_ADDRESS), 127.0.0.1
 EOF
-    sudo mkdir -p /etc/condor/tokens.d
     sudo systemctl restart condor
     echo "CM configured and restarted."
     ;;
 
   cloud)
     echo "=== Configuring Execute node: cloud (pegasus-cloud) ==="
-    sudo tee /etc/condor/config.d/00-execute.config << 'EOF'
+    sudo tee /etc/condor/config.d/50-cluster.config << 'EOF'
 CONDOR_HOST = pegasus-cm
 DAEMON_LIST = MASTER STARTD
 
 ContinuumTier = "cloud"
 STARTD_ATTRS = $(STARTD_ATTRS) ContinuumTier
-
-SEC_DEFAULT_AUTHENTICATION_METHODS = IDTOKENS
-SEC_CLIENT_AUTHENTICATION_METHODS  = IDTOKENS
-
-SEC_TOKEN_DIRECTORY = /etc/condor/tokens.d
 EOF
-    sudo mkdir -p /etc/condor/tokens.d
     sudo systemctl restart condor
     echo "Cloud execute node configured and restarted."
     ;;
 
   edge)
     echo "=== Configuring Execute node: edge (pegasus-edge) ==="
-    sudo tee /etc/condor/config.d/00-execute.config << 'EOF'
+    sudo tee /etc/condor/config.d/50-cluster.config << 'EOF'
 CONDOR_HOST = pegasus-cm
 DAEMON_LIST = MASTER STARTD
 
 ContinuumTier = "edge"
 STARTD_ATTRS = $(STARTD_ATTRS) ContinuumTier
-
-SEC_DEFAULT_AUTHENTICATION_METHODS = IDTOKENS
-SEC_CLIENT_AUTHENTICATION_METHODS  = IDTOKENS
-
-SEC_TOKEN_DIRECTORY = /etc/condor/tokens.d
 EOF
-    sudo mkdir -p /etc/condor/tokens.d
     sudo systemctl restart condor
     echo "Edge execute node configured and restarted."
     ;;

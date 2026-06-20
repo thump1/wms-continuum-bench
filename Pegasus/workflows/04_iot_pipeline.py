@@ -34,7 +34,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--devices", type=int, default=10)
 parser.add_argument("--readings", type=int, default=10000)
 parser.add_argument("--anomaly-rate", type=float, default=0.02)
-parser.add_argument("--placement", choices=["continuum", "cloud", "any"], default="any")
+parser.add_argument("--placement", choices=["continuum", "cloud", "edge", "any"], default="any")
 args = parser.parse_args()
 
 base_dir = Path(__file__).resolve().parent.parent
@@ -100,6 +100,9 @@ for dev in range(1, args.devices + 1):
     elif args.placement == "cloud":
         for j in [sim_job, pre_job, stat_job]:
             j.add_profiles(Namespace.CONDOR, "requirements", '(ContinuumTier == "cloud")')
+    elif args.placement == "edge":
+        for j in [sim_job, pre_job, stat_job]:
+            j.add_profiles(Namespace.CONDOR, "requirements", '(ContinuumTier == "edge")')
 
     wf.add_jobs(sim_job, pre_job, stat_job)
     stats_files.append(stats_json)
@@ -115,6 +118,8 @@ if args.placement == "continuum":
     agg_job.add_profiles(Namespace.CONDOR, "requirements", '(ContinuumTier == "cloud")')
 elif args.placement == "cloud":
     agg_job.add_profiles(Namespace.CONDOR, "requirements", '(ContinuumTier == "cloud")')
+elif args.placement == "edge":
+    agg_job.add_profiles(Namespace.CONDOR, "requirements", '(ContinuumTier == "edge")')
 
 wf.add_jobs(agg_job)
 

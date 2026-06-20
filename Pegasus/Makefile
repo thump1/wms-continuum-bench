@@ -12,8 +12,8 @@ READINGS ?= 10000
 ANOMALY  ?= 0.02
 PLACEMENT?= any
 
-.PHONY: help hello minipipeline iot iot-continuum iot-cloud \
-        status validate-output clean clean-all
+.PHONY: help hello minipipeline iot iot-continuum iot-cloud iot-edge \
+        status job-timing validate-output clean clean-all
 
 help:
 	@echo "Targets:"
@@ -22,14 +22,16 @@ help:
 	@echo "  iot                Run 04_iot_pipeline (any node placement)"
 	@echo "  iot-continuum      Run 04_iot_pipeline (edge/cloud placement)"
 	@echo "  iot-cloud          Run 04_iot_pipeline (cloud-only placement)"
+	@echo "  iot-edge           Run 04_iot_pipeline (edge-only placement)"
 	@echo ""
 	@echo "  status             Show Pegasus workflow status"
+	@echo "  job-timing         Show per-job wall clock from condor_history"
 	@echo "  validate-output    Diff Pegasus vs Nextflow IoT report"
 	@echo "  clean              Remove work directories"
 	@echo "  clean-all          Remove work + results"
 	@echo ""
 	@echo "Overrides:"
-	@echo "  DEVICES=10  READINGS=10000  ANOMALY=0.02  PLACEMENT=any|continuum|cloud"
+	@echo "  DEVICES=10  READINGS=10000  ANOMALY=0.02  PLACEMENT=any|continuum|cloud|edge"
 
 hello:
 	$(PYTHON) workflows/00_hello.py
@@ -54,6 +56,13 @@ iot-continuum:
 
 iot-cloud:
 	$(MAKE) iot PLACEMENT=cloud
+
+iot-edge:
+	$(MAKE) iot PLACEMENT=edge
+
+job-timing:
+	@echo "=== Per-job timing from condor_history ==="
+	@condor_history -af:h ClusterId ProcId Cmd RemoteWallClockTime RemoteHost 2>/dev/null | tail -80
 
 status:
 	@echo "=== HTCondor pool ==="

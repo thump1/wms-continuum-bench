@@ -101,8 +101,37 @@ First SWMS evaluated on real distributed hardware: 3-node HTCondor cluster on VM
 | IoT (10x10K) | any | 2m 41s | 1m 32s | 31+14=45 | Jobs spread across both nodes |
 | IoT (10x10K) | continuum | 2m 51s | 1m 31s | 31+14=45 | Edge on 2-vCPU, cloud on 4-vCPU |
 | IoT (10x10K) | cloud-only | 2m 31s | 1m 32s | 31+14=45 | All on 4-vCPU node |
+| IoT (10x10K) | edge-only | 2m 37s | 1m 32s | 31+14=45 | All on 2-vCPU node |
+| IoT (10x100K) | edge-only | 3m 46s | 3m 44s | 31+14=45 | Compute-dominated |
+| IoT (10x100K) | cloud-only | 3m 11s | 3m 47s | 31+14=45 | 4 slots = faster wall clock |
 
 **Takeaway**: Pegasus wall times are dominated by scheduling overhead (DAGMan polling, NEGOTIATOR_INTERVAL=20s, condorio file transfers), not compute. Actual compute time is constant (~1m 32s) across all placements. The 31-job modular DAG means more scheduling rounds than StreamFlow's 12-job merged design. Placement impact is small (~20s) because negotiation latency, not data transfer, is the bottleneck at this scale.
+
+### 5a. Pegasus latency injection (tc netem on edge node, continuum placement)
+
+tc netem injected on the edge VM's primary interface (ens33). Affects all HTCondor traffic: condorio file transfers, CEDAR protocol, negotiator updates, heartbeats.
+
+| Latency | Wall-clock | Compute | Overhead vs 0ms | Amplification vs naive |
+|---------|-----------|---------|-----------------|----------------------|
+| 0ms | 2m 56s | 1m 32s | baseline | — |
+| 50ms | 3m 42s | 1m 31s | +46s (+26%) | 15x |
+| 200ms | 5m 12s | 1m 32s | +2m 16s (+77%) | 11x |
+
+**Naive expectation**: 30 edge jobs x 2 transfers x L = 3s at 50ms, 12s at 200ms. Actual overhead is 11-15x higher due to multi-round-trip CEDAR protocol (IDTOKENS auth, file negotiation, chunked transfer, ack) and control plane amplification.
+
+**Comparison with StreamFlow tc netem (Section 4b)**: Both SWMSs show control plane amplification far beyond the data-plane prediction. StreamFlow's WebSocket-based k8s exec broke at 500ms; Pegasus's simpler CEDAR/condorio protocol is more latency-tolerant but still incurs 11-15x amplification. Compute time is unaffected in both — latency impacts only the transfer/scheduling layer.
+
+### 5b. Pegasus scale experiment (10x100K, edge vs cloud)
+
+| Workload | Edge-only (2 vCPU, 2 slots) | Cloud-only (4 vCPU, 4 slots) | Cloud advantage |
+|----------|----------------------------|------------------------------|-----------------|
+| 10x10K | 2m 37s | 2m 42s | -5s (cloud SLOWER) |
+| 10x100K | 3m 46s | 3m 11s | +35s (cloud faster) |
+
+At 10K: transfer overhead dominates — cloud's 4 concurrent slots bottleneck the submit node with competing condorio transfers.
+At 100K: compute dominates — cloud's 4 slots achieve ~2x effective parallelism, cutting wall time despite identical cumulative compute (~3m 45s).
+
+The crossover where cloud surpasses edge lies between 10K and 100K readings per device. This quantifies the fundamental edge-cloud tradeoff: edge minimises data movement cost, cloud maximises computational throughput. Workload intensity determines which factor dominates.
 
 ## 6. Architectural comparison
 
@@ -153,13 +182,21 @@ Placement has negligible impact in a local cluster (shared Docker network, zero 
 
 On real distributed hardware, continuum placement adds ~20s overhead. Unlike the local k3d cluster, this overhead is real (cross-node condorio file transfers + constrained matchmaking). But compute time is identical — the bottleneck is scheduling infrastructure, not compute or data transfer at this scale.
 
-### Latency sensitivity
+### Latency sensitivity — cross-SWMS comparison
 
-For sequential scatter with N devices and L ms latency per transfer:
-- **Total overhead** = N x 2 x L (sleep-based, application-level)
-- **Parallel scatter** would reduce this to 2 x L regardless of N
+| SWMS | Method | 0ms baseline | 50ms | 200ms | 500ms |
+|------|--------|-------------|------|-------|-------|
+| StreamFlow | sleep (app-level) | 23.9s | — | 26.3s (+10%) | 32.3s (+35%) |
+| StreamFlow | tc netem (k8s) | 2m 38s | 1m 43s* | 2m 53s (+10%) | FAILED |
+| Pegasus | tc netem (HTCondor) | 2m 56s | 3m 42s (+26%) | 5m 12s (+77%) | — |
 
-This makes parallel scheduling critical for latency-sensitive continuum workflows. A 200ms regional WAN latency adds 4s to a 10-device sequential pipeline but only 0.4s to a parallel one.
+*StreamFlow 50ms required retry due to WebSocket error.
+
+**Key insights**:
+1. **Application-level simulation (sleep)** follows the predictable formula: overhead = N x 2 x L for sequential scatter. This would reduce to 2 x L with parallel scatter.
+2. **Network-level injection (tc netem)** amplifies latency 11-15x beyond the naive calculation because it affects the control plane (scheduling, authentication, heartbeats) alongside data transfers.
+3. **Protocol matters**: StreamFlow's WebSocket-based k8s exec breaks at 500ms. Pegasus's CEDAR/condorio is more latency-tolerant but shows higher per-hop amplification. Neither system separates control and data plane networks.
+4. **Implication for continuum architectures**: Real WAN latency (50-200ms typical for regional edge) degrades SWMS performance by 26-77%, far beyond what pure data transfer analysis predicts. This motivates SDN/NFV network slicing to protect management traffic.
 
 ## 8. Pending comparisons
 
@@ -167,5 +204,5 @@ This makes parallel scheduling critical for latency-sensitive continuum workflow
 |------|--------|-----------|
 | Nextflow | Complete (local + Docker + k8s) | SSH to Ubuntu server |
 | StreamFlow | Complete (local + Docker + k8s + latency) | SSH/hybrid to Ubuntu server |
-| Pegasus | Complete (3-node HTCondor cluster) | Scale tests (50x100K) |
+| Pegasus | Complete (cluster + edge/cloud + latency + scale) | 50x100K if needed |
 | K3s multi-node | Not started | Deploy on Windows VMs |

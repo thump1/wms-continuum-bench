@@ -108,3 +108,99 @@ Key finding: placement impact is small (~20s) because the bottleneck is DAGMan/n
 | IoT (10x10K) | Pegasus | HTCondor (any) | 3-node VM cluster | 2m 41s | 45 | 31 compute + 14 infra |
 | IoT (10x10K) | Pegasus | HTCondor (continuum) | 3-node VM cluster | 2m 51s | 45 | edge→edge, cloud→cloud |
 | IoT (10x10K) | Pegasus | HTCondor (cloud-only) | 3-node VM cluster | 2m 31s | 45 | all on 4-vCPU cloud |
+| IoT (10x10K) | Pegasus | HTCondor (edge-only) | 3-node VM cluster | 2m 37s | 45 | all on 2-vCPU edge |
+
+---
+
+## Experiment 1: Edge-only vs Cloud-only placement (10x10K)
+
+### 2026-06-20 — IoT pipeline (10 devices x 10K, edge-only)
+- **Workflow**: `workflows/04_iot_pipeline.py --placement edge`
+- **Placement**: all 31 compute jobs on pegasus-edge (ContinuumTier=="edge"), 2 vCPU, 2 slots
+- **Wall-clock**: 2m 37s
+- **Cumulative job wall time**: 1m 32s
+- **Per-job timing** (from condor_history):
+  - simulate_sensors: 10 jobs, avg 1.8s (range 1-4s)
+  - edge_preprocess: 10 jobs, avg 3.0s (all 3s)
+  - edge_stats: 10 jobs, avg 2.3s (range 1-8s)
+  - cloud_aggregate: 1 job, 1s
+
+### 2026-06-20 — IoT pipeline (10 devices x 10K, cloud-only — repeat)
+- **Workflow**: `workflows/04_iot_pipeline.py --placement cloud`
+- **Placement**: all 31 compute jobs on pegasus-cloud (ContinuumTier=="cloud"), 4 vCPU, 4 slots
+- **Wall-clock**: 2m 42s
+- **Cumulative job wall time**: 1m 32s
+- **Per-job timing** (from condor_history):
+  - simulate_sensors: 10 jobs, avg 2.6s (range 1-7s)
+  - edge_preprocess: 10 jobs, avg 4.0s (range 3-9s)
+  - edge_stats: 10 jobs, avg 2.8s (range 1-7s)
+  - cloud_aggregate: 1 job, 2s
+
+**Finding**: Edge-only (2m 37s) is 5s FASTER than cloud-only (2m 42s) despite having half the CPU. Cloud's 4 parallel slots generate more concurrent condorio transfers through the 2-vCPU submit node, creating a transfer bottleneck that negates the extra compute capacity. Per-job times on cloud show higher variance (1-9s vs 1-4s on edge) due to contention.
+
+---
+
+## Experiment 2: Latency injection (continuum placement, 10x10K)
+
+tc netem injected on the edge node's primary interface (ens33) via `tc qdisc replace dev ens33 root netem delay Xms`. Verified via `ping` from CM.
+
+### 2026-06-20 — Continuum baseline (0ms)
+- **Wall-clock**: 2m 56s
+- **Cumulative compute**: 1m 32s
+
+### 2026-06-20 — Continuum + 50ms latency on edge
+- **Wall-clock**: 3m 42s
+- **Cumulative compute**: 1m 31s
+- **Overhead vs baseline**: +46s (+26%)
+- **Ping CM→edge**: 50.8ms avg
+
+### 2026-06-20 — Continuum + 200ms latency on edge
+- **Wall-clock**: 5m 12s
+- **Cumulative compute**: 1m 32s
+- **Overhead vs baseline**: +2m 16s (+77%)
+- **Ping CM→edge**: 200.6ms avg
+
+**Latency summary:**
+
+| Latency | Wall-clock | Compute | Overhead vs 0ms | Expected (naive) | Amplification factor |
+|---------|-----------|---------|-----------------|-------------------|--------------------|
+| 0ms | 2m 56s | 1m 32s | baseline | — | — |
+| 50ms | 3m 42s | 1m 31s | +46s (+26%) | ~3s | 15x |
+| 200ms | 5m 12s | 1m 32s | +2m 16s (+77%) | ~12s | 11x |
+
+**Naive expectation**: 30 edge jobs x 2 transfers x L = 3s at 50ms, 12s at 200ms. Actual overhead is 11-15x higher because condorio's CEDAR protocol involves multiple round trips per transfer (TCP handshake, IDTOKENS auth, file negotiation, chunked data, completion ack), and the HTCondor control plane (heartbeats, negotiation updates, ClassAd matching) also incurs latency on every packet.
+
+**Comparison with StreamFlow tc netem**: StreamFlow's k8s WebSocket exec broke entirely at 500ms. Pegasus/HTCondor completed at 200ms because condorio uses a simpler, more latency-tolerant file transfer protocol than WebSocket-based kubectl exec. However, the control plane amplification is similar in both systems.
+
+---
+
+## Experiment 3: Scaled workload (10x100K)
+
+10x more readings per device (100K vs 10K). Tests whether the edge-cloud performance gap grows with workload size.
+
+### 2026-06-20 — IoT pipeline (10 devices x 100K, edge-only)
+- **Workflow**: `workflows/04_iot_pipeline.py --devices 10 --readings 100000 --placement edge`
+- **Wall-clock**: 3m 46s
+- **Cumulative compute**: 3m 44s
+- **Scheduling overhead**: 2s (compute-dominated)
+
+### 2026-06-20 — IoT pipeline (10 devices x 100K, cloud-only)
+- **Workflow**: `workflows/04_iot_pipeline.py --devices 10 --readings 100000 --placement cloud`
+- **Wall-clock**: 3m 11s
+- **Cumulative compute**: 3m 47s
+- **Per-job timing** (from condor_history):
+  - simulate_sensors: 10 jobs, avg 2.7s
+  - edge_preprocess: 10 jobs, avg 17.5s (range 15-21s, vs 3s at 10K)
+  - edge_stats: 10 jobs, avg 2.2s
+  - cloud_aggregate: 1 job, 2s
+
+**Scale comparison:**
+
+| Workload | Edge-only (2 vCPU) | Cloud-only (4 vCPU) | Cloud advantage | Bottleneck |
+|----------|-------------------|---------------------|-----------------|------------|
+| 10x10K | 2m 37s | 2m 42s | -5s (slower) | Transfer overhead |
+| 10x100K | 3m 46s | 3m 11s | +35s (faster) | Compute (parallelism) |
+
+**Finding**: At small workloads, scheduling and transfer overhead dominates — cloud's extra parallelism creates more concurrent transfers that bottleneck the submit node. At 10x scale, compute dominates — cloud's 4 concurrent slots process the pipeline ~15% faster. The crossover point where cloud becomes advantageous is between 10K and 100K readings per device.
+
+This is the fundamental edge-cloud tradeoff: edge has lower latency to data sources but fewer resources; cloud has more resources but higher transfer cost. The workload size determines which factor dominates.

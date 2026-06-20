@@ -90,20 +90,37 @@ Injects packet delay on the k3d edge node via `tc netem`. Affects ALL traffic: k
 
 **Implication for edge-cloud SWMS architectures**: Real network latency degrades the control plane alongside data transfers. SWMSs that use in-band orchestration (same network path for control and data) are vulnerable to latency-induced control plane failures. This motivates separate management networks (SDN/NFV network slicing) for production edge-cloud deployments.
 
-## 5. Architectural comparison
+## 5. Pegasus WMS (HTCondor cluster, 10 devices x 10K readings)
 
-| Dimension | Nextflow | StreamFlow |
-|-----------|----------|------------|
-| **Workflow language** | Nextflow DSL (Groovy) | CWL (YAML standard) |
-| **Scatter execution** | Parallel (up to CPU limit) | Sequential (v0.1.6) |
-| **Container model** | Per-task container | Persistent container (`docker exec`) |
-| **k8s integration** | Native executor (pod per task) | Helm3 connector (persistent pods) |
-| **Multi-site deployment** | Custom executor plugins | Native YAML bindings |
-| **Continuum support** | Limited (single executor) | Native (per-step binding to different targets) |
-| **Observability** | `-with-trace` (CPU, RSS, I/O per task) | SQLite provenance DB |
-| **Maturity** | Production (Seqera Labs) | Research (Univ. Torino, v0.1.6) |
+First SWMS evaluated on real distributed hardware: 3-node HTCondor cluster on VMware VMs (Ryzen 7-3700X, 64 GB host). CM/submit (2 vCPU, 3.3 GB), cloud executor (4 vCPU, 15 GB), edge executor (2 vCPU, 7.2 GB). All Ubuntu 26.04, HTCondor 25.11.0, Pegasus 5.1.2.
 
-## 6. Scheduling insights
+| Pipeline | Placement | Wall-clock | Compute time | Jobs (compute+infra) | Notes |
+|----------|-----------|-----------|-------------|---------------------|-------|
+| Hello (4 tasks) | any | 1m 51s | — | 4+6=10 | DAGMan overhead dominates |
+| Minipipeline (5+1) | any | 1m 56s | — | 6+8=14 | Fan-out/fan-in DAG |
+| IoT (10x10K) | any | 2m 41s | 1m 32s | 31+14=45 | Jobs spread across both nodes |
+| IoT (10x10K) | continuum | 2m 51s | 1m 31s | 31+14=45 | Edge on 2-vCPU, cloud on 4-vCPU |
+| IoT (10x10K) | cloud-only | 2m 31s | 1m 32s | 31+14=45 | All on 4-vCPU node |
+
+**Takeaway**: Pegasus wall times are dominated by scheduling overhead (DAGMan polling, NEGOTIATOR_INTERVAL=20s, condorio file transfers), not compute. Actual compute time is constant (~1m 32s) across all placements. The 31-job modular DAG means more scheduling rounds than StreamFlow's 12-job merged design. Placement impact is small (~20s) because negotiation latency, not data transfer, is the bottleneck at this scale.
+
+## 6. Architectural comparison
+
+| Dimension | Nextflow | StreamFlow | Pegasus |
+|-----------|----------|------------|---------|
+| **Workflow language** | Nextflow DSL (Groovy) | CWL (YAML standard) | Python API |
+| **Scheduler** | Built-in | Built-in | HTCondor (external) |
+| **Scatter execution** | Parallel (up to CPU limit) | Sequential (v0.1.6) | Parallel (HTCondor slots) |
+| **Container model** | Per-task container | Persistent container (`docker exec`) | No containers (bare-metal) |
+| **k8s integration** | Native executor (pod per task) | Helm3 connector (persistent pods) | Condor-CE / glide-in |
+| **Multi-site deployment** | Custom executor plugins | Native YAML bindings | HTCondor ClassAd matching |
+| **Continuum support** | Limited (single executor) | Native (per-step binding) | ContinuumTier ClassAd |
+| **Data staging** | Work dir / publishDir | StreamFlow runtime | condorio (HTCondor file transfer) |
+| **Observability** | `-with-trace` (CPU, RSS, I/O) | SQLite provenance DB | Stampede DB + kickstart records |
+| **DAG shape (IoT 10x)** | 31 jobs (4-stage) | 12 jobs (merged edge) | 31 jobs (4-stage) + 14 infra |
+| **Maturity** | Production (Seqera Labs) | Research (Univ. Torino, v0.1.6) | Production (USC ISI, v5.1.2) |
+
+## 7. Scheduling insights
 
 ### Sequential vs parallel scatter
 
@@ -116,7 +133,7 @@ StreamFlow's sequential scatter is its main performance bottleneck for multi-dev
 
 The gap narrows at scale because Nextflow's local executor also serialises beyond its CPU limit (~11 tasks). In k8s, Nextflow over-subscribes and achieves higher concurrency.
 
-### Placement impact (local k3d cluster)
+### Placement impact — StreamFlow (local k3d cluster)
 
 | StreamFlow config | Wall-clock | Delta vs cloud-only |
 |-------------------|-----------|---------------------|
@@ -126,6 +143,16 @@ The gap narrows at scale because Nextflow's local executor also serialises beyon
 
 Placement has negligible impact in a local cluster (shared Docker network, zero real latency). The slight overhead of multi-pod configs comes from Helm chart deployment of additional pods. In a real WAN-separated continuum, placement would dominate due to data transfer costs.
 
+### Placement impact — Pegasus (real distributed cluster)
+
+| Pegasus config | Wall-clock | Compute time | Delta vs cloud-only |
+|----------------|-----------|-------------|---------------------|
+| Cloud-only (4 vCPU) | 2m 31s | 1m 32s | baseline |
+| Any (both nodes) | 2m 41s | 1m 32s | +10s (+6.6%) |
+| Continuum (edge+cloud) | 2m 51s | 1m 31s | +20s (+13.2%) |
+
+On real distributed hardware, continuum placement adds ~20s overhead. Unlike the local k3d cluster, this overhead is real (cross-node condorio file transfers + constrained matchmaking). But compute time is identical — the bottleneck is scheduling infrastructure, not compute or data transfer at this scale.
+
 ### Latency sensitivity
 
 For sequential scatter with N devices and L ms latency per transfer:
@@ -134,11 +161,11 @@ For sequential scatter with N devices and L ms latency per transfer:
 
 This makes parallel scheduling critical for latency-sensitive continuum workflows. A 200ms regional WAN latency adds 4s to a 10-device sequential pipeline but only 0.4s to a parallel one.
 
-## 7. Pending comparisons
+## 8. Pending comparisons
 
 | SWMS | Status | Next step |
 |------|--------|-----------|
 | Nextflow | Complete (local + Docker + k8s) | SSH to Ubuntu server |
 | StreamFlow | Complete (local + Docker + k8s + latency) | SSH/hybrid to Ubuntu server |
-| Pegasus | Not started | Install on Ubuntu server with HTCondor |
+| Pegasus | Complete (3-node HTCondor cluster) | Scale tests (50x100K) |
 | K3s multi-node | Not started | Deploy on Windows VMs |
